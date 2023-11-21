@@ -39,17 +39,17 @@ class CNN2_old(nn.Module):
         return self.fc(pooled_acts), pooled_acts
     
 class CNN(nn.Module):
-    def __init__(self, gated=False, gate_at_pool=False):
+    def __init__(self, max_pool=True):
         super().__init__()
-        self.gated = gated
-        self.gate_at_pool = gate_at_pool
+        self.max_pool = max_pool
 
         self.conv = nn.Conv2d(1, 64, kernel_size=13, padding=13//2, bias=False)
         with torch.no_grad():
             self.conv.weight[:] = 0.
-        #if gated:
-        #    self.att = nn.Parameter(torch.ones(64))
-        self.pool = nn.AdaptiveMaxPool2d(1)
+        if max_pool:
+            self.pool = nn.AdaptiveMaxPool2d(1)
+        else:
+            self.pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Linear(64, 10, bias=False)
 
     def forward(self, x):
