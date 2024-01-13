@@ -1,7 +1,10 @@
+"""Some models to classify MNIST images"""
+
 import torch
 from torch import nn
 
 class Linear(nn.Module):
+    """Simple linear model."""
     def __init__(self):
         super().__init__()
         self.fc = nn.Linear(28*28, 10, bias=False)
@@ -9,6 +12,7 @@ class Linear(nn.Module):
         return self.fc(x)
     
 class LinearHidden(nn.Module):
+    """Linear model with a hidden layer."""
     def __init__(self):
         super().__init__()
         self.fc1 = nn.Linear(28*28, 64, bias=False)
@@ -16,29 +20,8 @@ class LinearHidden(nn.Module):
     def forward(self, x):
         return self.fc2(self.fc1(x))
        
-class CNN_old(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv = nn.Conv2d(1, 64, kernel_size=13, padding=13//2, bias=False)
-        self.pool = nn.AdaptiveMaxPool2d(1)
-        self.fc = nn.Linear(64, 10, bias=False)
-    def forward(self, x):
-        x = self.pool(self.conv(x))
-        x = torch.flatten(x, 1)
-        return self.fc(x)
-    
-class CNN2_old(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv = nn.Conv2d(1, 64, kernel_size=13, padding=13//2, bias=False)
-        self.pool = nn.AdaptiveMaxPool2d(1)
-        self.fc = nn.Linear(64, 10, bias=False)
-    def forward(self, x):
-        x = self.pool(self.conv(x))
-        pooled_acts = torch.flatten(x, 1)
-        return self.fc(pooled_acts), pooled_acts
-    
 class CNN(nn.Module):
+    """CNN with a large kernel and a global max or average pooling."""
     def __init__(self, max_pool=True):
         super().__init__()
         self.max_pool = max_pool
@@ -56,6 +39,7 @@ class CNN(nn.Module):
         return self.forward_train(x)['out']
 
     def forward_train(self, x):
+        """This method can be used for extracting all intermediate features."""
         maps = self.conv(x)
         pooled = self.pool(maps)
         pooled = torch.flatten(pooled, 1)
@@ -68,3 +52,27 @@ class CNN(nn.Module):
         }
 
         return ret
+
+class CNN_old(nn.Module):
+    """Deprecated model."""
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv2d(1, 64, kernel_size=13, padding=13//2, bias=False)
+        self.pool = nn.AdaptiveMaxPool2d(1)
+        self.fc = nn.Linear(64, 10, bias=False)
+    def forward(self, x):
+        x = self.pool(self.conv(x))
+        x = torch.flatten(x, 1)
+        return self.fc(x)
+    
+class CNN2_old(nn.Module):
+    """Deprecated model."""
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv2d(1, 64, kernel_size=13, padding=13//2, bias=False)
+        self.pool = nn.AdaptiveMaxPool2d(1)
+        self.fc = nn.Linear(64, 10, bias=False)
+    def forward(self, x):
+        x = self.pool(self.conv(x))
+        pooled_acts = torch.flatten(x, 1)
+        return self.fc(pooled_acts), pooled_acts

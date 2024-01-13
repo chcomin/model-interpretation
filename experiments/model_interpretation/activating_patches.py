@@ -150,7 +150,7 @@ def get_maximum_activations(model, module_names, ds, n=10, bs=16, device='cuda')
     #torch.cuda.cudart().cudaProfilerStop()
     # Put (max_act, (idx_img, max_act_loc)) of the n largest activations
     # in act_data[module_name][channel_index]
-    print('t1: ', time.time()-t1)
+    print('\nt1: ', time.time()-t1)
     act_data = {}
     for name, module_data in module_data_storage.items():
         hook = module_data['hook']
@@ -294,7 +294,7 @@ def maximum_activating_patches(model, module_names, ds, n=10, bs=16, threshold=1
                     patch_data[name][channel][idx_act] = storage
 
         hook.remove()
-    print('t2: ', time.time()-t2)
+    print('\nt2: ', time.time()-t2)
 
     return patch_data
     
