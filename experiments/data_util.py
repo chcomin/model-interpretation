@@ -8,6 +8,7 @@ MNIST_MEAN = 33.3
 MNIST_STD = 78.6
 
 def transform(img):
+    """Transformation for the MNIST dataset. PIL->numpy->z-score->tensor."""
     img = np.array(img, dtype=np.float32)
     img = normalize(img, MNIST_MEAN, MNIST_STD)
     return torch.from_numpy(img)
@@ -35,6 +36,8 @@ def get_mnist(root, n):
     return ds_train, ds_valid
 
 def get_mnist_numpy(root, n):
+    """Load the MNIST dataset as a numpy array. For instance, the train dataset 
+    is loaded as a single matrix, where each row is an image."""
 
     ds_train, ds_valid = get_mnist(root, n)
     data_train = np.array(ds_train.data.reshape(n, -1), dtype=np.float32)
@@ -47,9 +50,10 @@ def get_mnist_numpy(root, n):
 
     return data_train, labels_train, data_valid, labels_valid
 
-def reduce_dimensionality(data_train, data_valid):
+def reduce_dimensionality(data_train, data_valid, var_keep=0.95):
+    """Apply PCA to the data."""
 
-    mapper = PCA(n_components=0.95, whiten=False)
+    mapper = PCA(n_components=var_keep, whiten=False)
     data_train_pca = mapper.fit_transform(data_train)
     data_valid_pca = mapper.transform(data_valid)
     u = data_train_pca.mean()
