@@ -1,4 +1,3 @@
-# For distances evaluation
 from sklearn.manifold import Isomap
 from sklearn.metrics import silhouette_samples
 from scipy.sparse.csgraph import connected_components, shortest_path
@@ -7,9 +6,17 @@ from sklearn.neighbors import NearestNeighbors, kneighbors_graph, radius_neighbo
 
 
 def kdistance(data, n_neighbors=5, radius=None, connected=False):
-    '''Calculates the geodesic distances between samples. Taken from the
-    fit() method of class Isomap from scikit-learn. If `connected` is False,
-    distances can be infinite.
+    '''Calculates the geodesic distances between samples. Adapted from the
+    fit() method of class Isomap from scikit-learn. 
+    
+    Given a set of samples, a graph is constructed by connecting each sample with
+    its `n_neighbors` nearest neighbors or with all samples that are a distance
+    smaller than `radius` from the sample. Then, the distance between each pair
+    of samples is calculated as the shortest path length between the samples.
+    
+    Note that the graph might be disconnected. If `connected` is False, distances 
+    can be infinite. If `connected` is True, a connection is artifically created
+    between the closest samples of disconnected components.
     '''
 
     nbrs = NearestNeighbors(n_neighbors=n_neighbors, radius=radius)
