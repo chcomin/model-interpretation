@@ -4,9 +4,11 @@ import heapq
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torchtrainer.module_util import Hook, ReceptiveField
+from torchtrainer.module_util import Hook
 from torchtrainer.img_util import create_grid
 from torch.utils.data import DataLoader
+
+_profile = 1   #0: no profile, 1: timings only, 2: for nsight
 
 class PriorityQueue:
     def __init__(self, n):
@@ -61,7 +63,9 @@ def get_maximum_activations(model, module_names, ds, n=10, bs=16, device='cuda')
         model: Pytorch model
         module_names: list containing module names
         ds: the dataset
-        n (int, optional): number of maximum activations to store. Defaults to 10.
+        n (int, optional): number of maximum activations to store. Defaults to 10
+        bs (int, optional): batch size to use. Defaults to 16
+        device (str, optional): device to use
 
     Returns:
         act_data: dictionary where act_data[module_name][channel_index] contains information
@@ -75,10 +79,11 @@ def get_maximum_activations(model, module_names, ds, n=10, bs=16, device='cuda')
     for name in module_names:
         modules.append(model.get_submodule(name))
 
-    dl = DataLoader(ds, bs, shuffle=False)
-    #dl = DataLoader(ds, bs, shuffle=False, num_workers=7, persistent_workers=True)
-    #iter(dl)
-    t1 = time.time()
+    #dl = DataLoader(ds, bs, shuffle=False)
+    dl = DataLoader(ds, bs, shuffle=False, num_workers=5, persistent_workers=True, pin_memory=False)
+    if _profile>0:
+        iter(dl)
+        t1 = time.time()
 
     hooks = attach_hooks(modules)
     # Apply model to an image to create priority queues for each channel.
@@ -93,34 +98,27 @@ def get_maximum_activations(model, module_names, ds, n=10, bs=16, device='cuda')
 
         module_data_storage[name] = {'hook':hook, 'queues':queues}
 
-    #torch.cuda.synchronize()
-    #torch.cuda.cudart().cudaProfilerStart()
-    #torch.cuda.nvtx.range_push("main-loop")
+    if _profile>1:
+        torch.cuda.synchronize()
+        torch.cuda.cudart().cudaProfilerStart()
+        torch.cuda.nvtx.range_push("main-loop")
+
     print("Capturing maximum activations...")
     for idx_batch, (imgs, _) in enumerate(dl):
         print('\r\033[K'+f'Batch {idx_batch}', end='')
-        #torch.cuda.nvtx.range_push("forward")
+        if _profile>1:
+            torch.cuda.nvtx.range_push("forward")
         _ = model(imgs.to(device))
-        #torch.cuda.nvtx.range_pop()
-        #torch.cuda.nvtx.range_push("calculations")
+        if _profile>1:
+            torch.cuda.nvtx.range_pop()
+            torch.cuda.nvtx.range_push("calculations")
         for name, module_data in module_data_storage.items():
             hook = module_data['hook']
             queues = module_data['queues']
             # For each module, go through the activations for each channel
             act = hook.activation
             num_imgs, num_channels, nr, nc = act.shape
-            '''for idx_in_batch in range(num_imgs):
-                idx_img = idx_batch*bs + idx_in_batch
-                for channel in range(num_channels):
-                    idx_max = act[idx_in_batch, channel].argmax().item()
-                    r = idx_max//nc
-                    c = idx_max - r*nc
-                    max_act_loc = (r, c)
-                    max_act = act[idx_in_batch, channel, r, c].item()
 
-                    # Save maximum value of activation, the index of the image and the
-                    # pixel location of the activation
-                    queues[channel].push(max_act, (idx_img, max_act_loc))'''
             # Maximum activation for each image and channel
             max_act_ic, indices_ic = act.reshape(num_imgs, num_channels, -1).max(dim=2)
             # Pixel position of the maximum activations
@@ -144,13 +142,17 @@ def get_maximum_activations(model, module_names, ds, n=10, bs=16, device='cuda')
                     # Copy data to CPU and include in queues
                     queues[channel].push(max_act.item(), (idx_img.item(), (ra.item(), ca.item())))       
             
-    #    torch.cuda.nvtx.range_pop()
-    #torch.cuda.nvtx.range_pop()
-    #torch.cuda.synchronize()
-    #torch.cuda.cudart().cudaProfilerStop()
+        if _profile>1:
+            torch.cuda.nvtx.range_pop()
+    if _profile>0:
+        print('\nt1: ', time.time()-t1)
+        if _profile>1:
+            torch.cuda.nvtx.range_pop()
+            torch.cuda.synchronize()
+            torch.cuda.cudart().cudaProfilerStop()
+        
     # Put (max_act, (idx_img, max_act_loc)) of the n largest activations
     # in act_data[module_name][channel_index]
-    print('\nt1: ', time.time()-t1)
     act_data = {}
     for name, module_data in module_data_storage.items():
         hook = module_data['hook']
@@ -163,7 +165,7 @@ def get_maximum_activations(model, module_names, ds, n=10, bs=16, device='cuda')
 
     return act_data
 
-def maximum_activating_patches(model, module_names, ds, n=10, bs=16, threshold=1e-8, eps=1e-8, device='cuda'):
+def maximum_activation_patches(model, module_names, ds, n=10, bs=16, threshold=1e-8, eps=1e-8, device='cuda'):
     """Get image patches from a dataset that maximally activate the features of the model. 
 
     *Note: if an image contains more than one pixel that maximally activate a channel, only one
@@ -174,8 +176,10 @@ def maximum_activating_patches(model, module_names, ds, n=10, bs=16, threshold=1
         module_names: list containing module names
         ds: the dataset
         n (int, optional): number of maximum activations to store. Defaults to 10.
+        bs (int, optional): batch size to use. Defaults to 16
         threshold (float, optional): only returns patches having activation larger than this. 
         eps (float, optional): epsilon to detect non-zero gradient values. Defaults to 1e-8.
+        device (str, optional): device to use
 
     Returns:
         patch_data: dictionary where patch_data[name][channel][idx_act] contains the patches for
@@ -191,10 +195,10 @@ def maximum_activating_patches(model, module_names, ds, n=10, bs=16, threshold=1
     model.eval()
     model.to(device)
 
-    #t1 = time.time()
     act_data = get_maximum_activations(model, module_names, ds, n, bs, device=device)
-    #print('t1: ', time.time()-t1)
-    t2 = time.time()
+    
+    if _profile>0:
+        t2 = time.time()
     '''Get receptive field sizes. Not used because the receptive field size can change depending
     on the position of the activation. For instance, suppose two x2 nearest neighbors interpolations 
     are done in succession. For a convolution with kernel size 3, sometimes the receptive field
@@ -208,7 +212,6 @@ def maximum_activating_patches(model, module_names, ds, n=10, bs=16, threshold=1
         rf_size = bbox_rf[2]-bbox_rf[0]+1, bbox_rf[3]-bbox_rf[1]+1
         rf_size_map[name] = rf_size'''
 
-    #receptive_field = ReceptiveField(model)
     print("\nGetting patches...")
     patch_data = {}
     for name, channel_data in act_data.items():
@@ -236,65 +239,24 @@ def maximum_activating_patches(model, module_names, ds, n=10, bs=16, threshold=1
                     # Get bounding box where gradients are not zero.
                     bbox_grad = get_bbox(img_grad, eps)
 
-                    # Can also get bbox and center of receptive field, but takes more time
-                    '''img_size = img.shape[-2:]
-                    bbox_rf_act, center_rf_act  = receptive_field.receptive_field_bbox(name, num_channels=img.shape[0], img_size=img_size, 
-                                                                                     pixel=max_act_loc)  '''
-                    
-                    # Do many sanity checks
-                    '''bbox_rf, _ = receptive_field.receptive_field_bbox(name, num_channels=img.shape[0], img_size=img_size)
-                    size_rf = bbox_rf[2]-bbox_rf[0]+1, bbox_rf[3]-bbox_rf[1]+1
-                    if bbox_rf_act[0]==0 or bbox_rf_act[1]==0 or bbox_rf_act[2]==img_size[0]-1 or bbox_rf_act[3]==img_size[1]-1:
-                        # If receptive field is at the border
-                        pass
-                    else:
-                        size_rf_act = bbox_rf_act[2]-bbox_rf_act[0]+1, bbox_rf_act[3]-bbox_rf_act[1]+1
-                        # Check if the size of the layer receptive field is the same as the size for this specific activation
-                        if size_rf_act==size_rf:
-                            diff_check = 2
-                            r0, c0, r1, c1 = bbox_rf_act
-                            center_rf_bbox = r0+size_rf[0]//2, c0+size_rf[1]//2
-                            if abs(center_rf_bbox[0]-center_rf_act[0])>diff_check or abs(center_rf_bbox[1]-center_rf_act[1])>diff_check:
-                                print(f"Warning, center of receptive field of module {name}, channel {channel} and activation {idx_act} should be {center_rf_bbox}, but got {center_rf_act}.")    
-                        else:
-                            print(f"Warning, receptive field size of module {name} is {size_rf}, but got size {size_rf_act} for {idx_act}-th activation of channel {channel}.")
-
-                        size_rf_grad = bbox_grad[2]-bbox_grad[0]+1, bbox_grad[3]-bbox_grad[1]+1
-                        if size_rf_grad!=size_rf:
-                            print(f"Receptive field size of module {name} is {size_rf}, but gradient rf has size {size_rf_grad} for {idx_act}-th activation of channel {channel}.")
-                    size_rf_act = bbox_rf_act[2]-bbox_rf_act[0]+1, bbox_rf_act[3]-bbox_rf_act[1]+1
-                    size_rf_grad = bbox_grad[2]-bbox_grad[0]+1, bbox_grad[3]-bbox_grad[1]+1
-                    if size_rf_grad!=size_rf_act:
-                        print(f"Receptive field size of module {name} is {size_rf_act}, but gradient rf has size {size_rf_grad} for {idx_act}-th activation of channel {channel}.")'''
-
-
                     # Capture image patch and gradients. Need to save on cpu due to memory constraints
                     r0, c0, r1, c1 = bbox_grad
                     patch_img = img.detach()[:, r0:r1+1, c0:c1+1].to('cpu')
                     patch_grad = img_grad[:, r0:r1+1, c0:c1+1].to('cpu')
-
-                    # Get center by shifting half the known rf size from one of the points of the activation rf
-                    # Since the corners of the activation rf can be outside of the image, we need to do some checks
-                    '''if bbox_rf_act[0]==0:
-                        c_r = bbox_rf_act[2]-size_rf_grad[0]//2
-                    else:
-                        c_r = bbox_rf_act[0]+size_rf_grad[0]//2
-                    if bbox_rf_act[1]==0:
-                        c_c = bbox_rf_act[3]-size_rf_grad[1]//2
-                    else:
-                        c_c = bbox_rf_act[1]+size_rf_grad[1]//2
-                    center = c_r, c_c'''
                     
-                    storage = {'patch_img':patch_img,
-                            'patch_grad':patch_grad,
-                            'idx_img':idx_img,
-                            'max_act':max_act,
-                            'max_act_loc':max_act_loc,
-                            'bbox_grad':bbox_grad}
+                    storage = {
+                        'patch_img':patch_img,
+                        'patch_grad':patch_grad,
+                        'idx_img':idx_img,
+                        'max_act':max_act,
+                        'max_act_loc':max_act_loc,
+                        'bbox_grad':bbox_grad
+                    }
                     patch_data[name][channel][idx_act] = storage
 
         hook.remove()
-    print('\nt2: ', time.time()-t2)
+    if _profile>0:
+        print('\nt2: ', time.time()-t2)
 
     return patch_data
     
@@ -336,7 +298,7 @@ def get_bbox(img_grad, eps=1e-8):
 #*** Functions for plotting the results ***
 
 def show_patches(patch_data, module_names=None, n=5, transform=None, reescale_each=False, tile_size=(100,100), width=12):
-    """Show patches returned by the function maximum_activating_patches.
+    """Show patches returned by the function maximum_activation_patches.
 
     Args:
         patch_data (dict): Dictionary of patches.
@@ -603,8 +565,8 @@ def test():
     ds = Dataset(x)
     model = SimpleModel()
 
-    patch_data = maximum_activating_patches(model, ['conv1', 'conv2', 'conv3'], ds, n=3, device='cuda')
-    plot_data(patch_data, n=3)
+    patch_data = maximum_activation_patches(model, ['conv1', 'conv2', 'conv3'], ds, n=3, device='cuda')
+    show_patches(patch_data, n=3)
 
 if __name__=="__main__":
 
@@ -618,12 +580,17 @@ if __name__=="__main__":
         std = torch.tensor(std, device=x.device).reshape(3, 1, 1)
         x_or = 255.*(std*x + mean)
         x_or = x_or.to(torch.uint8)
+        #x_or.permute(1, 2, 0)
 
-        return x_or.permute(1, 2, 0)
+        return x_or
 
     def load_data():
 
+        #torch._dynamo.config.skip_nnmodule_hook_guards = False
+        torch.set_float32_matmul_precision('high')
+
         root = 'I:/datasets_ssd/imagenet'
+        #root = '/mnt/i/datasets_ssd/imagenet'
 
         weights = ResNet50_Weights.DEFAULT
         model = resnet50(weights=weights)
@@ -635,9 +602,14 @@ if __name__=="__main__":
         imagenet = ImageNet(root, split='val', transform=preprocess)
         transform = partial(transform_inv, mean=preprocess.mean, std=preprocess.std)
 
+        #try:
+        #    model = torch.compile(model)
+        #except RuntimeError as e:
+        #    print(f"Warning, model was not compiled. Reason: {e}")
+
         return model, imagenet, categories, transform
         
     module_names = ('relu', 'layer1')
     model, ds, categories, transform = load_data()
-    ds = [ds[idx] for idx in range(0, 50000, 10)]
-    maximum_activating_patches(model, module_names, ds, n=5, bs=512, device='cuda')
+    ds.samples = [ds.samples[idx] for idx in range(0, 50000, 10)]
+    maximum_activation_patches(model, module_names, ds, n=5, bs=128, device='cuda')

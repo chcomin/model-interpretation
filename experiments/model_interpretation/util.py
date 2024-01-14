@@ -3,6 +3,7 @@ import torch
 import matplotlib.pyplot as plt
 
 class ResNetSampler(torch.nn.Module):
+    """Sample activations of each stage of a Pytorch's ResNet model."""
 
     def __init__(self, model):
         super().__init__()
@@ -36,10 +37,10 @@ class ResNetSampler(torch.nn.Module):
         return features
 
 def plot_with_grid(img):
+    """Plot image with grid lines."""
 
     plt.imshow(img, 'gray', interpolation='none')
     plt.vlines(np.arange(-0.5,img.shape[1]), -0.5, img.shape[0]-0.5, linewidth=0.5)
     plt.hlines(np.arange(-0.5,img.shape[0]), -0.5, img.shape[1]-0.5, linewidth=0.5)
-    #plt.xlim((100, 150))
-    #plt.ylim((100, 150))
+
 
